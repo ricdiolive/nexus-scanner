@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#06111f">
+  <title>OPERAÇÃO NEXUS // SCANNER</title>
+  <script src="https://unpkg.com/html5-qrcode" defer></script>
+  <style>
+    :root{
+      --bg:#030914;
+      --panel:#071525;
+      --line:#1497c8;
+      --cyan:#32d9ff;
+      --text:#e8f7ff;
+      --muted:#82a8b8;
+      --danger:#ff5f7d;
+      --ok:#47f0b1;
+    }
+    *{box-sizing:border-box}
+    body{
+      margin:0; min-height:100vh; color:var(--text);
+      font-family:Arial,Helvetica,sans-serif;
+      background:
+        radial-gradient(circle at 50% 20%, rgba(18,119,164,.18), transparent 34%),
+        linear-gradient(rgba(40,150,190,.035) 1px,transparent 1px),
+        linear-gradient(90deg,rgba(40,150,190,.035) 1px,transparent 1px),
+        var(--bg);
+      background-size:auto,32px 32px,32px 32px,auto;
+      display:flex; justify-content:center;
+    }
+    .app{width:min(720px,100%);padding:20px 16px 28px}
+    header{text-align:center;margin-bottom:16px}
+    .logo{width:min(92%,560px);max-height:170px;object-fit:contain;filter:drop-shadow(0 0 18px rgba(30,198,255,.16))}
+    .eyebrow{font-size:11px;letter-spacing:3px;color:var(--muted);margin:2px 0 7px}
+    h1{font-size:24px;letter-spacing:5px;margin:0;font-weight:700}
+    .sub{font-size:10px;letter-spacing:2px;color:var(--cyan);margin-top:8px}
+    .scanner-panel{
+      border:1px solid rgba(50,217,255,.42); background:rgba(7,21,37,.86);
+      padding:12px; box-shadow:0 0 30px rgba(0,170,230,.08), inset 0 0 28px rgba(0,140,190,.04);
+      position:relative;
+    }
+    .scanner-panel:before,.scanner-panel:after{
+      content:"";position:absolute;width:42px;height:42px;pointer-events:none;
+    }
+    .scanner-panel:before{left:-1px;top:-1px;border-left:3px solid var(--cyan);border-top:3px solid var(--cyan)}
+    .scanner-panel:after{right:-1px;bottom:-1px;border-right:3px solid var(--cyan);border-bottom:3px solid var(--cyan)}
+    #reader{width:100%;min-height:280px;background:#000;overflow:hidden}
+    #reader video{object-fit:cover}
+    .status{text-align:center;padding:14px 8px 8px}
+    .status-title{font-size:15px;letter-spacing:2px;font-weight:700}
+    .status-text{font-size:12px;color:var(--muted);margin-top:6px}
+    button{
+      width:100%;border:1px solid var(--cyan);background:rgba(15,99,132,.18);
+      color:var(--text);padding:13px 16px;font-size:12px;font-weight:700;letter-spacing:2px;
+      cursor:pointer;margin-top:12px;transition:.2s;
+    }
+    button:hover{background:rgba(30,190,235,.25)}
+    button:disabled{opacity:.45;cursor:not-allowed}
+    .result{display:none;margin-top:14px;border:1px solid rgba(71,240,177,.55);padding:18px;text-align:center;background:rgba(12,50,43,.25)}
+    .result.show{display:block}
+    .ok{color:var(--ok);font-size:12px;letter-spacing:3px;font-weight:700}
+    .code{font-size:24px;letter-spacing:3px;margin:12px 0}
+    .small{font-size:10px;color:var(--muted);letter-spacing:2px}
+    .footer{display:flex;justify-content:space-between;gap:10px;margin-top:14px;font-size:10px;color:var(--muted);letter-spacing:1px}
+    .counter{color:var(--cyan)}
+    .error{color:var(--danger)}
+    @media(max-width:480px){
+      .app{padding:12px 10px 22px}
+      .logo{max-height:125px}
+      h1{font-size:19px}
+      #reader{min-height:250px}
+    }
+  </style>
+</head>
+<body>
+<main class="app">
+  <header>
+    <img class="logo" src="logo-nexus.png" alt="Operação NEXUS">
+    <div class="eyebrow">SISTEMA DE IDENTIFICAÇÃO</div>
+    <h1>SCANNER</h1>
+    <div class="sub">ACESSO RESTRITO // NEXUS</div>
+  </header>
+
+  <section class="scanner-panel">
+    <div id="reader"></div>
+    <div class="status">
+      <div class="status-title" id="statusTitle">AGUARDANDO ATIVAÇÃO</div>
+      <div class="status-text" id="statusText">Ative a câmera para iniciar a leitura.</div>
+    </div>
+  </section>
+
+  <button id="startBtn">ATIVAR CÂMERA</button>
+
+  <section class="result" id="result">
+    <div class="ok">✓ LEITURA CONFIRMADA</div>
+    <div class="code" id="resultCode">NEXUS-TESTE-001</div>
+    <div class="small">IDENTIFICADOR RECONHECIDO</div>
+    <button id="againBtn">ESCANEAR NOVAMENTE</button>
+  </section>
+
+  <div class="footer">
+    <span>OPERAÇÃO NEXUS</span>
+    <span class="counter">TESTE // 0 LEITURAS</span>
+  </div>
+</main>
+
+<script>
+window.addEventListener('load', () => {
+  const startBtn = document.getElementById('startBtn');
+  const againBtn = document.getElementById('againBtn');
+  const result = document.getElementById('result');
+  const resultCode = document.getElementById('resultCode');
+  const statusTitle = document.getElementById('statusTitle');
+  const statusText = document.getElementById('statusText');
+
+  let scanner = null;
+  let running = false;
+  let locked = false;
+
+  function setStatus(title, text, error=false){
+    statusTitle.textContent = title;
+    statusTitle.classList.toggle('error', error);
+    statusText.textContent = text;
+  }
+
+  async function startScanner(){
+    if (running) return;
+    locked = false;
+    result.classList.remove('show');
+    setStatus('ATIVANDO CÂMERA', 'Solicitando acesso ao dispositivo...');
+    scanner = new Html5Qrcode("reader");
+
+    try{
+      await scanner.start(
+        { facingMode: { ideal: "environment" } },
+        { fps: 10, qrbox: { width: 250, height: 250 }, aspectRatio: 1.0 },
+        async (decodedText) => {
+          if (locked) return;
+          locked = true;
+          resultCode.textContent = decodedText;
+          setStatus('LEITURA CONCLUÍDA', 'QR Code reconhecido com sucesso.');
+          result.classList.add('show');
+          try { await scanner.stop(); } catch(e){}
+          running = false;
+          startBtn.disabled = false;
+          startBtn.textContent = 'ATIVAR CÂMERA';
+          if (navigator.vibrate) navigator.vibrate(120);
+        },
+        () => {}
+      );
+      running = true;
+      startBtn.disabled = true;
+      startBtn.textContent = 'CÂMERA ATIVA';
+      setStatus('AGUARDANDO LEITURA', 'Aponte a câmera para o QR Code.');
+    }catch(err){
+      running = false;
+      startBtn.disabled = false;
+      startBtn.textContent = 'TENTAR NOVAMENTE';
+      setStatus('CÂMERA NÃO DISPONÍVEL', 'Permita o acesso à câmera e tente novamente.', true);
+      console.error(err);
+    }
+  }
+
+  async function stopScanner(){
+    if (scanner && running){
+      try { await scanner.stop(); } catch(e){}
+      running = false;
+    }
+  }
+
+  startBtn.addEventListener('click', startScanner);
+  againBtn.addEventListener('click', async () => {
+    await stopScanner();
+    startScanner();
+  });
+});
+</script>
+</body>
+</html>
