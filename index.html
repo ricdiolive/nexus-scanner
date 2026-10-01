@@ -22,7 +22,7 @@ button,select{width:100%;border:1px solid var(--cyan);background:rgba(15,99,132,
 button:disabled{opacity:.45;cursor:not-allowed}
 select{letter-spacing:0;background:#071525}
 select option{background:#071525;color:#fff}
-.result{display:none;margin-top:14px;border:1px solid rgba(71,240,177,.55);padding:18px;text-align:center;background:rgba(12,50,43,.25)}.result.show{display:block}.ok{color:var(--ok);font-size:12px;letter-spacing:3px;font-weight:700}.code{font-size:24px;letter-spacing:3px;margin:12px 0}.small{font-size:10px;color:var(--muted);letter-spacing:2px}
+.result{display:none;margin-top:14px;border:1px solid rgba(71,240,177,.55);padding:18px;text-align:center;background:rgba(12,50,43,.25)}.result.show{display:block}.ok{font-size:12px;letter-spacing:3px;font-weight:700}.code{font-size:24px;letter-spacing:3px;margin:12px 0}.small{font-size:10px;color:var(--muted);letter-spacing:2px}
 .footer{display:flex;justify-content:space-between;gap:10px;margin-top:14px;font-size:10px;color:var(--muted);letter-spacing:1px}.counter{color:var(--cyan)}
 @media(max-width:480px){.app{padding:12px 10px 22px}.logo{max-height:125px}h1{font-size:19px}#reader{min-height:250px}}
 </style>
@@ -52,9 +52,9 @@ select option{background:#071525;color:#fff}
 </div>
 
 <section class="result" id="result">
-<div class="ok">✓ LEITURA CONFIRMADA</div>
+<div class="ok" id="authorizationStatus"></div>
 <div class="code" id="resultCode"></div>
-<div class="small">IDENTIFICADOR RECONHECIDO</div>
+<div class="small" id="authorizationMessage"></div>
 <button id="againBtn">ESCANEAR NOVAMENTE</button>
 </section>
 
@@ -63,99 +63,148 @@ select option{background:#071525;color:#fff}
 
 <script>
 window.addEventListener("load", async () => {
-  const statusTitle=document.getElementById("statusTitle");
-  const statusText=document.getElementById("statusText");
-  const startBtn=document.getElementById("startBtn");
-  const againBtn=document.getElementById("againBtn");
-  const cameraSelect=document.getElementById("cameraSelect");
-  const result=document.getElementById("result");
-  const resultCode=document.getElementById("resultCode");
-  let scanner=null, running=false, locked=false;
 
-  function status(title,text,error=false){
-    statusTitle.textContent=title;
-    statusTitle.classList.toggle("error",error);
-    statusText.textContent=text;
-  }
+const statusTitle=document.getElementById("statusTitle");
+const statusText=document.getElementById("statusText");
+const startBtn=document.getElementById("startBtn");
+const againBtn=document.getElementById("againBtn");
+const cameraSelect=document.getElementById("cameraSelect");
+const result=document.getElementById("result");
+const resultCode=document.getElementById("resultCode");
+const authorizationStatus=document.getElementById("authorizationStatus");
+const authorizationMessage=document.getElementById("authorizationMessage");
 
-  async function loadCameras(){
-    try{
-      if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
-        throw new Error("O navegador não disponibiliza acesso à câmera.");
-      }
-      // Request permission once so Chrome reveals camera labels.
-      const temp=await navigator.mediaDevices.getUserMedia({video:true,audio:false});
-      temp.getTracks().forEach(t=>t.stop());
+/* ÚNICOS QR CODES AUTORIZADOS */
+const AUTHORIZED_CODES=[
+"NEXUS-ALFA-07",
+"NEXUS-NEXUS-04"
+];
 
-      const devices=await navigator.mediaDevices.enumerateDevices();
-      const cameras=devices.filter(d=>d.kind==="videoinput");
-      cameraSelect.innerHTML="";
-      cameras.forEach((cam,i)=>{
-        const opt=document.createElement("option");
-        opt.value=cam.deviceId;
-        opt.textContent=cam.label || `Câmera ${i+1}`;
-        cameraSelect.appendChild(opt);
-      });
-      if(!cameras.length) throw new Error("Nenhuma câmera foi encontrada.");
-      status("PRONTO PARA LEITURA","Selecione a câmera e pressione ATIVAR CÂMERA.");
-    }catch(err){
-      cameraSelect.innerHTML='<option value="">Câmera não detectada</option>';
-      status("CÂMERA NÃO DISPONÍVEL",friendlyError(err),"error");
-      console.error("NEXUS camera diagnostic:",err);
-    }
-  }
+let scanner=null,running=false,locked=false;
 
-  function friendlyError(err){
-    if(err && err.name==="NotAllowedError") return "O acesso à câmera foi bloqueado pelo navegador.";
-    if(err && err.name==="NotFoundError") return "Nenhuma câmera disponível neste dispositivo.";
-    if(err && err.name==="NotReadableError") return "A câmera está sendo usada por outro programa. Feche OBS, Meet, Teams ou outro app que use a webcam.";
-    if(err && err.name==="OverconstrainedError") return "A câmera selecionada não aceitou esta configuração. Escolha outra câmera.";
-    if(err && err.name==="SecurityError") return "O navegador bloqueou o acesso por segurança. Confirme que o endereço começa com HTTPS.";
-    return "Não foi possível iniciar a câmera. Verifique a permissão e tente novamente.";
-  }
+function status(title,text,error=false){
+statusTitle.textContent=title;
+statusTitle.classList.toggle("error",error);
+statusText.textContent=text;
+}
 
-  async function start(){
-    if(running) return;
-    locked=false; result.classList.remove("show");
-    if(!window.Html5Qrcode){status("ERRO DO SCANNER","A biblioteca de leitura ainda não carregou. Atualize a página.","error");return;}
-    const deviceId=cameraSelect.value;
-    if(!deviceId){await loadCameras(); if(!cameraSelect.value)return;}
-    scanner=new Html5Qrcode("reader");
-    status("ATIVANDO CÂMERA","Iniciando vídeo...");
-    try{
-      await scanner.start(
-        cameraSelect.value ? {deviceId:{exact:cameraSelect.value}} : {facingMode:"user"},
-        {fps:10,qrbox:{width:250,height:250}},
-        async (decodedText)=>{
-          if(locked)return;
-          locked=true;
-          resultCode.textContent=decodedText;
-          status("LEITURA CONCLUÍDA","QR Code reconhecido com sucesso.");
-          result.classList.add("show");
-          try{await scanner.stop()}catch(e){}
-          running=false; startBtn.disabled=false; startBtn.textContent="ATIVAR CÂMERA";
-          if(navigator.vibrate)navigator.vibrate(120);
-        },
-        ()=>{}
-      );
-      running=true; startBtn.disabled=true; startBtn.textContent="CÂMERA ATIVA";
-      status("AGUARDANDO LEITURA","Aponte a câmera para o QR Code.");
-    }catch(err){
-      running=false; startBtn.disabled=false; startBtn.textContent="TENTAR NOVAMENTE";
-      status("CÂMERA NÃO DISPONÍVEL",friendlyError(err),"error");
-      console.error("NEXUS scanner start error:",err);
-    }
-  }
+async function loadCameras(){
+try{
+if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
+throw new Error("O navegador não disponibiliza acesso à câmera.");
+}
+const temp=await navigator.mediaDevices.getUserMedia({video:true,audio:false});
+temp.getTracks().forEach(t=>t.stop());
+const devices=await navigator.mediaDevices.enumerateDevices();
+const cameras=devices.filter(d=>d.kind==="videoinput");
+cameraSelect.innerHTML="";
+cameras.forEach((cam,i)=>{
+const opt=document.createElement("option");
+opt.value=cam.deviceId;
+opt.textContent=cam.label || `Câmera ${i+1}`;
+cameraSelect.appendChild(opt);
+});
+if(!cameras.length) throw new Error("Nenhuma câmera foi encontrada.");
+status("PRONTO PARA LEITURA","Selecione a câmera e pressione ATIVAR CÂMERA.");
+}catch(err){
+cameraSelect.innerHTML='<option value="">Câmera não detectada</option>';
+status("CÂMERA NÃO DISPONÍVEL",friendlyError(err),"error");
+console.error("NEXUS camera diagnostic:",err);
+}
+}
 
-  async function stop(){
-    if(scanner && running){try{await scanner.stop()}catch(e){}}
-    running=false;
-  }
+function friendlyError(err){
+if(err && err.name==="NotAllowedError") return "O acesso à câmera foi bloqueado pelo navegador.";
+if(err && err.name==="NotFoundError") return "Nenhuma câmera disponível neste dispositivo.";
+if(err && err.name==="NotReadableError") return "A câmera está sendo usada por outro programa. Feche OBS, Meet, Teams ou outro app que use a webcam.";
+if(err && err.name==="OverconstrainedError") return "A câmera selecionada não aceitou esta configuração. Escolha outra câmera.";
+if(err && err.name==="SecurityError") return "O navegador bloqueou o acesso por segurança. Confirme que o endereço começa com HTTPS.";
+return "Não foi possível iniciar a câmera. Verifique a permissão e tente novamente.";
+}
 
-  startBtn.addEventListener("click",start);
-  againBtn.addEventListener("click",async()=>{await stop();start();});
-  navigator.mediaDevices?.addEventListener?.("devicechange",loadCameras);
-  loadCameras();
+async function start(){
+if(running) return;
+
+locked=false;
+result.classList.remove("show");
+authorizationStatus.textContent="";
+authorizationMessage.textContent="";
+result.style.borderColor="rgba(71,240,177,.55)";
+
+if(!window.Html5Qrcode){
+status("ERRO DO SCANNER","A biblioteca de leitura ainda não carregou. Atualize a página.","error");
+return;
+}
+
+const deviceId=cameraSelect.value;
+if(!deviceId){await loadCameras();if(!cameraSelect.value)return;}
+
+scanner=new Html5Qrcode("reader");
+status("ATIVANDO CÂMERA","Iniciando vídeo...");
+
+try{
+await scanner.start(
+cameraSelect.value ? {deviceId:{exact:cameraSelect.value}} : {facingMode:"user"},
+{fps:10,qrbox:{width:250,height:250}},
+async (decodedText)=>{
+if(locked)return;
+
+locked=true;
+const code=decodedText.trim();
+resultCode.textContent=code;
+
+const isAuthorized=AUTHORIZED_CODES.includes(code);
+
+if(isAuthorized){
+authorizationStatus.textContent="✓ AUTORIZADO";
+authorizationStatus.style.color="var(--ok)";
+authorizationMessage.textContent="Credencial reconhecida. PROTOCOLO E-07 DESBLOQUEADO.";
+status("AUTORIZADO","Credencial reconhecida. Protocolo E-07 desbloqueado.");
+result.style.borderColor="rgba(71,240,177,.55)";
+}else{
+authorizationStatus.textContent="✕ NÃO AUTORIZADO";
+authorizationStatus.style.color="var(--danger)";
+authorizationMessage.textContent="Esta credencial não possui acesso ao protocolo. Teste outra credencial.";
+status("NÃO AUTORIZADO","Esta credencial não possui acesso ao protocolo.","error");
+result.style.borderColor="rgba(255,95,125,.55)";
+}
+
+result.classList.add("show");
+
+try{await scanner.stop()}catch(e){}
+running=false;
+startBtn.disabled=false;
+startBtn.textContent="ATIVAR CÂMERA";
+
+if(navigator.vibrate)navigator.vibrate(120);
+},
+()=>{}
+);
+
+running=true;
+startBtn.disabled=true;
+startBtn.textContent="CÂMERA ATIVA";
+status("AGUARDANDO LEITURA","Aponte a câmera para o QR Code.");
+
+}catch(err){
+running=false;
+startBtn.disabled=false;
+startBtn.textContent="TENTAR NOVAMENTE";
+status("CÂMERA NÃO DISPONÍVEL",friendlyError(err),"error");
+console.error("NEXUS scanner start error:",err);
+}
+}
+
+async function stop(){
+if(scanner && running){try{await scanner.stop()}catch(e){}}
+running=false;
+}
+
+startBtn.addEventListener("click",start);
+againBtn.addEventListener("click",async()=>{await stop();start();});
+navigator.mediaDevices?.addEventListener?.("devicechange",loadCameras);
+loadCameras();
+
 });
 </script>
 </body>
