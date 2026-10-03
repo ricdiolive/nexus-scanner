@@ -22,7 +22,7 @@ button,select{width:100%;border:1px solid var(--cyan);background:rgba(15,99,132,
 button:disabled{opacity:.45;cursor:not-allowed}
 select{letter-spacing:0;background:#071525}
 select option{background:#071525;color:#fff}
-.result{display:none;margin-top:14px;border:1px solid rgba(71,240,177,.55);padding:18px;text-align:center;background:rgba(12,50,43,.25)}.result.show{display:block}.ok{font-size:12px;letter-spacing:3px;font-weight:700}.code{font-size:24px;letter-spacing:3px;margin:12px 0}.small{font-size:10px;color:var(--muted);letter-spacing:2px}
+.result{display:none;margin-top:14px;border:1px solid rgba(71,240,177,.55);padding:18px;text-align:center;background:rgba(12,50,43,.25)}.result.show{display:block}.ok{font-size:16px;letter-spacing:3px;font-weight:800}.code{font-size:24px;letter-spacing:3px;margin:12px 0}.small{font-size:10px;color:var(--muted);letter-spacing:2px}.result-label{font-size:10px;color:var(--muted);letter-spacing:3px;margin-top:14px}.word{font-size:34px;line-height:1.08;letter-spacing:4px;font-weight:900;margin:8px 0 12px;color:var(--cyan);text-shadow:0 0 18px rgba(50,217,255,.18)}.keyword{font-size:11px;color:var(--ok);letter-spacing:3px;font-weight:800;margin-top:16px}.evidence-log{display:none;margin-top:14px;border:1px solid rgba(50,217,255,.28);padding:14px;background:rgba(7,21,37,.55)}.evidence-log.show{display:block}.log-title{font-size:10px;color:var(--cyan);letter-spacing:2px;font-weight:800;margin-bottom:10px}.log-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px 10px;text-align:left}.log-item{font-size:11px;color:var(--text);padding:7px 8px;border:1px solid rgba(130,168,184,.18);background:rgba(255,255,255,.02)}.log-item span{color:var(--muted);margin-right:6px}.result .again{margin-top:14px}
 .footer{display:flex;justify-content:space-between;gap:10px;margin-top:14px;font-size:10px;color:var(--muted);letter-spacing:1px}.counter{color:var(--cyan)}
 @media(max-width:480px){.app{padding:12px 10px 22px}.logo{max-height:125px}h1{font-size:19px}#reader{min-height:250px}}
 </style>
@@ -53,12 +53,21 @@ select option{background:#071525;color:#fff}
 
 <section class="result" id="result">
 <div class="ok" id="authorizationStatus"></div>
+<div class="result-label">CREDENCIAL IDENTIFICADA</div>
 <div class="code" id="resultCode"></div>
+<div class="result-label" id="wordLabel">PALAVRA DA CREDENCIAL</div>
+<div class="word" id="resultWord"></div>
+<div class="keyword" id="keywordLabel" style="display:none">PALAVRA-CHAVE</div>
 <div class="small" id="authorizationMessage"></div>
-<button id="againBtn">ESCANEAR NOVAMENTE</button>
+<button class="again" id="againBtn">ESCANEAR NOVAMENTE</button>
 </section>
 
-<div class="footer"><span>OPERAÇÃO NEXUS</span><span class="counter">TESTE // 0 LEITURAS</span></div>
+<section class="evidence-log" id="evidenceLog">
+<div class="log-title">REGISTRO DE EVIDÊNCIAS</div>
+<div class="log-list" id="logList"></div>
+</section>
+
+<div class="footer"><span>OPERAÇÃO NEXUS</span><span class="counter">EVIDÊNCIAS REGISTRADAS // 0/11</span></div>
 </main>
 
 <script>
@@ -73,12 +82,46 @@ const result=document.getElementById("result");
 const resultCode=document.getElementById("resultCode");
 const authorizationStatus=document.getElementById("authorizationStatus");
 const authorizationMessage=document.getElementById("authorizationMessage");
+const resultWord=document.getElementById("resultWord");
+const keywordLabel=document.getElementById("keywordLabel");
+const evidenceLog=document.getElementById("evidenceLog");
+const logList=document.getElementById("logList");
+const counter=document.querySelector(".counter");
 
 /* ÚNICOS QR CODES AUTORIZADOS */
 const AUTHORIZED_CODES=[
 "NEXUS-ALFA-07",
 "NEXUS-NEXUS-04"
 ];
+
+/* UMA PALAVRA POR CREDENCIAL — 11 PALAVRAS POR EQUIPE */
+const CREDENTIAL_WORDS={
+"NEXUS-ALFA-01":"CRIAR",
+"NEXUS-ALFA-02":"EVIDÊNCIAS",
+"NEXUS-ALFA-03":"JUNTOS",
+"NEXUS-ALFA-04":"INVESTIGAR",
+"NEXUS-ALFA-05":"É",
+"NEXUS-ALFA-06":"COM",
+"NEXUS-ALFA-07":"ANALISAR",
+"NEXUS-ALFA-08":"ATENÇÃO",
+"NEXUS-ALFA-09":"DECIDIR",
+"NEXUS-ALFA-10":"CONECTAR",
+"NEXUS-ALFA-11":"E",
+"NEXUS-NEXUS-01":"COLABORAÇÃO",
+"NEXUS-NEXUS-02":"TECNOLOGIA",
+"NEXUS-NEXUS-03":"SUBSTITUI",
+"NEXUS-NEXUS-04":"PENSAMENTO",
+"NEXUS-NEXUS-05":"CRÍTICO",
+"NEXUS-NEXUS-06":"EXIGE",
+"NEXUS-NEXUS-07":"CONTEXTO",
+"NEXUS-NEXUS-08":"VERIFICAÇÃO",
+"NEXUS-NEXUS-09":"E",
+"NEXUS-NEXUS-10":"RESPONSABILIDADE",
+"NEXUS-NEXUS-11":"NÃO"
+};
+
+const scannedCodes=new Set();
+let sessionTeam=null;
 
 let scanner=null,running=false,locked=false;
 
@@ -129,6 +172,8 @@ locked=false;
 result.classList.remove("show");
 authorizationStatus.textContent="";
 authorizationMessage.textContent="";
+resultWord.textContent="";
+keywordLabel.style.display="none";
 result.style.borderColor="rgba(71,240,177,.55)";
 
 if(!window.Html5Qrcode){
@@ -154,6 +199,13 @@ const code=decodedText.trim();
 resultCode.textContent=code;
 
 const isAuthorized=AUTHORIZED_CODES.includes(code);
+const word=CREDENTIAL_WORDS[code] || "—";
+const teamPrefix=code.startsWith("NEXUS-ALFA-") ? "ALFA" : code.startsWith("NEXUS-NEXUS-") ? "NEXUS" : null;
+if(!sessionTeam && teamPrefix) sessionTeam=teamPrefix;
+
+resultWord.textContent=word;
+keywordLabel.style.display=isAuthorized ? "block" : "none";
+document.getElementById("wordLabel").textContent=isAuthorized ? "PALAVRA-CHAVE" : "PALAVRA DA CREDENCIAL";
 
 if(isAuthorized){
 authorizationStatus.textContent="✓ AUTORIZADO";
@@ -167,6 +219,18 @@ authorizationStatus.style.color="var(--danger)";
 authorizationMessage.textContent="Esta credencial não possui acesso ao protocolo. Teste outra credencial.";
 status("NÃO AUTORIZADO","Esta credencial não possui acesso ao protocolo.","error");
 result.style.borderColor="rgba(255,95,125,.55)";
+}
+
+if(teamPrefix === sessionTeam && !scannedCodes.has(code)){
+scannedCodes.add(code);
+const item=document.createElement("div");
+item.className="log-item";
+const number=code.split("-").pop().padStart(2,"0");
+item.innerHTML=`<span>${number}</span>${word}`;
+logList.appendChild(item);
+evidenceLog.classList.add("show");
+const count=[...scannedCodes].filter(c=>c.startsWith(`NEXUS-${sessionTeam}-`)).length;
+counter.textContent=`EVIDÊNCIAS REGISTRADAS // ${count}/11`;
 }
 
 result.classList.add("show");
